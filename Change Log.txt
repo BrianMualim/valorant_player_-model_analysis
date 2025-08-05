@@ -1,0 +1,7 @@
+18 Jul 2025
+
+Fixed pastTeams data handling
+
+21 Jul 2025
+
+Scrape a player's gamepage perfectly
