@@ -39,65 +39,58 @@ def get_player_id_from_name(player_name: str) -> str:
             return parts[1], parts[2]  # return (player_id, player_name)
     
     raise ValueError(f"No player found for name: {player_name}")
-    
-    
-    
 
-def run_scraper(player_id: int, player_name: str, 
-                start_date: datetime, end_date: datetime,
-                output_dir: str = r"C:\Users\brian\Downloads\valo_scraper") -> list:
+    
+def setup_driver() -> webdriver.Chrome:
     os.environ['PATH'] += r"C:/Program Files/ChromeDriver"
-    
-    
-    driver = webdriver.Chrome()
-    player_list = []
+    return webdriver.Chrome()
 
-    driver.get(f"https://www.vlr.gg/player/matches/{player_id}/{player_name}/?page=1")
-    time.sleep(2)
+def get_match_links(driver, player_id, player_name, page):
+    url = f"https://www.vlr.gg/player/matches/{player_id}/{player_name}/?page={page}"
+    driver.get(url)
+    time.sleep(1)
     
-    #page for match list
-    match_list = driver.find_elements(By.CLASS_NAME, "mod-dark")[0].find_elements(By.TAG_NAME, "a")
-    match_counter = 0
+    try:
+        match_links = driver.find_elements(By.CLASS_NAME, "mod-dark")[0].find_elements(By.TAG_NAME, "a")
+        date_elements  = driver.find_elements(By.CLASS_NAME, "m-item-date")
+        
+        if not match_links or not date_elements:
+            return [], []
+        return match_links, date_elements
     
-    # page for each match
-    for _ in match_list:
-        date = driver.find_elements(By.CLASS_NAME, "m-item-date")[match_counter].text.split()[0]
-        date = datetime.datetime.strptime(date, '%Y/%m/%d').date()
+    except IndexError:
+        return [], []
         
-        if date > end_date:
-            match_counter += 1
-            continue  # Skip future match
-        
-        if date < start_date:
-            break  # Older than desired range
-        
-        
-        
-        match_list = driver.find_elements(By.CLASS_NAME, "mod-dark")[0].find_elements(By.TAG_NAME, "a")
-        match_list[match_counter].click()
-        time.sleep(2)
 
-        # print(date)
-        # date = driver.find_elements(By.CLASS_NAME, "moment-tz-convert")[0].text # Take date from VODS
-        
-        team1 = driver.find_elements(By.CLASS_NAME, "wf-title-med")[0].text
-        team1_elo = driver.find_elements(By.CLASS_NAME, "match-header-link-name-elo")[0].text[1:-1]
-        team2 = driver.find_elements(By.CLASS_NAME, "wf-title-med")[1].text
-        team2_elo = driver.find_elements(By.CLASS_NAME, "match-header-link-name-elo")[1].text[1:-1]
+def get_match_date(date_element) -> datetime.date:
+    date_text = date_element.text.split()[0]
+    return datetime.datetime.strptime(date_text, '%Y/%m/%d').date()
 
-        games = driver.find_elements(By.CLASS_NAME, "vm-stats-gamesnav-item")
-        game_counter = 1
 
-        for _ in games[:-1]:
+def parse_match_metadata(driver):
+    team1 = driver.find_elements(By.CLASS_NAME, "wf-title-med")[0].text
+    team1_elo = driver.find_elements(By.CLASS_NAME, "match-header-link-name-elo")[0].text[1:-1]
+    team2 = driver.find_elements(By.CLASS_NAME, "wf-title-med")[1].text
+    team2_elo = driver.find_elements(By.CLASS_NAME, "match-header-link-name-elo")[1].text[1:-1]
+    return team1, team1_elo, team2, team2_elo
+
+
+def parse_game_stats(driver, player_name, date, team1, team1_elo, team2, team2_elo):
+    profiles = []
+    games = driver.find_elements(By.CLASS_NAME, "vm-stats-gamesnav-item")
+
+    # Go through each game
+    for game_counter in range(1, len(games)):
+        try:
             map_name = games[game_counter].find_element(By.TAG_NAME, "div").text
             games[game_counter].click()
             time.sleep(1)
 
             players = driver.find_elements(By.XPATH, "//table[contains(@class, 'wf-table-inset')]/tbody/tr")
-
+            
+            # Finding correct player
             for player in players:
                 name = player.find_element(By.CLASS_NAME, "mod-player").find_element(By.CLASS_NAME, "text-of").text
-
                 if name.strip().lower() != player_name.strip().lower():
                     continue
 
@@ -120,44 +113,76 @@ def run_scraper(player_id: int, player_name: str,
                     "Assists": assists
                 }
 
-                # Duplicate check
-                if player_list:
-                    last = player_list[-1]
-                    if last["Kills"] == kills and last["Deaths"] == deaths and last["Assists"] == assists:
-                        continue
-
-                player_list.append(profile)
+                profiles.append(profile)
                 break
+        except:
+            continue
 
-            game_counter += 1
+    return profiles
+
+def run_scraper(player_id: int, player_name: str, 
+                start_date: datetime, end_date: datetime,
+                output_dir: str = r"C:\Users\brian\Downloads\valo_scraper") -> list:
+    
+    
+    driver = setup_driver()
+    player_list = []
+    page = 1
+    
+    while True:
+        
+        
+        match_links, date_elements = get_match_links(driver, player_id, player_name, page)
+        
+        if not match_links:
+            break
+        
+        
+        # i is used to get each date based on index
+        for i in range(len(match_links)):
+            
+            match_links, date_elements = get_match_links(driver, player_id, player_name, page)
+            date = get_match_date(date_elements[i])
+            
+            if date > end_date:
+                continue
+            if date < start_date:
+                driver.quit()
+                return player_list
+            
+            # Refresh clickable match links
+            match_links[i].click()
+            time.sleep(1)
+            
+            try:
+                team1, team1_elo, team2, team2_elo = parse_match_metadata(driver)
+            except:
+                driver.back()
+                time.sleep(1)
+                continue
             
             
+            profiles = parse_game_stats(driver, player_name, date, team1, team1_elo, team2, team2_elo)
+            
+            # Code for redundancy in stats
+            for profile in profiles:
+                
+                if player_list and profile["Kills"] == player_list[-1]["Kills"] and \
+                   profile["Deaths"] == player_list[-1]["Deaths"] and \
+                   profile["Assists"] == player_list[-1]["Assists"]:
+                    continue
+                
+                player_list.append(profile)
 
-        match_counter += 1
-        
-        # if match_counter >= 2:
-        #     break
-        
-        driver.get(f"https://www.vlr.gg/player/matches/{player_id}/{player_name}/?page=1")
-        time.sleep(1)
-        
-        
-        
+            driver.back()
+            time.sleep(1)
+
+        page += 1
+            
     driver.quit()
-
-
-    # This is for manual saving, there's another way of user saving in app.py
-    # # Save CSV
-    # os.makedirs(output_dir, exist_ok=True)
-    # csv_file_path = os.path.join(output_dir, f"{player_name}.csv")
-
-    # with open(csv_file_path, 'w', newline='', encoding='utf-8') as csv_file:
-    #     field_names = ["Date", "Team1", "Team1_ELO", "Team2", "Team2_ELO", "Map", "Name", "Agent", "Kills", "Deaths", "Assists"]
-    #     writer = csv.DictWriter(csv_file, fieldnames=field_names)
-    #     writer.writeheader()
-    #     writer.writerows(player_list)
-
     return player_list
+
+
 
 
 # Add map filter post-scrape
