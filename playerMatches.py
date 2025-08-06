@@ -162,8 +162,6 @@ def run_scraper(player_id: int, player_name: str,
 
 # Add map filter post-scrape
 
-# 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
-
 ################## TEST CASES
 
 # start_date = datetime.date(2025, 7, 1)
